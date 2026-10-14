@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+backend/.env
+backend/data/
+backend/storage/
+*.db
+
+# Node
+node_modules/
+dist/
+
+# Docker / local secrets
+.env
+
+# Tooling / OS
+.qodo/
+.DS_Store

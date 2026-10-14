@@ -1,0 +1,44 @@
+[
+  {
+    "expected_name": "Legal registration certificate",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Not supplied with the submission package" }
+  },
+  {
+    "expected_name": "Audited financial statements",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Applicant has operated for less than two full financial years" }
+  },
+  {
+    "expected_name": "Signed headcount declaration",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Not supplied; headcount stated informally as 3 staff" }
+  },
+  {
+    "expected_name": "Detailed budget table",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Only a summary table in Part B; no Annex A2 template attached" }
+  },
+  {
+    "expected_name": "Letters of support from end-user organisations",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Informal municipal interest mentioned; no signed letters" }
+  },
+  {
+    "expected_name": "Declaration of other public funding",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Annex A3 not supplied" }
+  },
+  {
+    "expected_name": "Data-management plan",
+    "required": false,
+    "present": false,
+    "metadata": { "note": "Recommended only; not prepared" }
+  }
+]

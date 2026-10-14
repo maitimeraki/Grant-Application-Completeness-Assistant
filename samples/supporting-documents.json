@@ -1,0 +1,62 @@
+[
+  {
+    "expected_name": "Legal registration certificate",
+    "required": true,
+    "present": true,
+    "metadata": { "file": "GH-2026-02_A5_ClosedLoop-Dye.pdf", "pages": 2, "uploaded": "2026-03-18" }
+  },
+  {
+    "expected_name": "Audited financial statements",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Claimed in application annex list but file not in submission package" }
+  },
+  {
+    "expected_name": "Signed headcount declaration",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Claimed as Annex 3 but not uploaded" }
+  },
+  {
+    "expected_name": "Detailed budget table",
+    "required": true,
+    "present": true,
+    "metadata": { "file": "GH-2026-02_A2_ClosedLoop-Dye.xlsx", "sheets": 1, "total_eur": 610000 }
+  },
+  {
+    "expected_name": "Consortium agreement",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Two-partner consortium; agreement stated as unsigned, to be signed after evaluation" }
+  },
+  {
+    "expected_name": "Declaration of other public funding",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Listed as Annex 7 in draft but not in submission package" }
+  },
+  {
+    "expected_name": "Letter of support from Kaunas Chamber of Commerce",
+    "required": true,
+    "present": true,
+    "metadata": { "file": "GH-2026-02_LoS1_ClosedLoop-Dye.pdf", "pages": 1, "signatory": "Chamber secretary" }
+  },
+  {
+    "expected_name": "Second letter of support (brand partner)",
+    "required": true,
+    "present": false,
+    "metadata": { "note": "Guideline requires at least two end-user letters; second letter still being drafted" }
+  },
+  {
+    "expected_name": "Logic model / theory of change",
+    "required": false,
+    "present": true,
+    "metadata": { "file": "GH-2026-02_Annex6_ClosedLoop-Dye.pdf", "pages": 1 }
+  },
+  {
+    "expected_name": "Data-management plan",
+    "required": false,
+    "present": false,
+    "metadata": { "note": "Recommended only; deferred until funding decision" }
+  }
+]
