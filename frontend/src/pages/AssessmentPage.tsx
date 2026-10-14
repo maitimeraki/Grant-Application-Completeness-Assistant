@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   createManualMapping,
   createRequirement,
   fetchAssessment,
+  fetchAssessmentStatus,
   fetchLlmLogs,
   fetchVersionBlocks,
   patchClaim,
@@ -612,12 +613,28 @@ export default function AssessmentPage() {
   const toast = useToast()
   const [selectedReqId, setSelectedReqId] = useState<number | null>(null)
 
+  // Lightweight progress probe — the only thing polled while the pipeline runs.
+  // The full assessment payload is intentionally NOT refetched on an interval.
+  const { data: status } = useQuery({
+    queryKey: ['assessment-status', assessmentId],
+    queryFn: () => fetchAssessmentStatus(assessmentId),
+    refetchInterval: (query) =>
+      query.state.error ? 5000 : query.state.data?.status === 'running' ? 5000 : false,
+  })
+  const running = status?.status === 'running'
+
   const { data: assessment, error, isLoading } = useQuery({
     queryKey: ['assessment', assessmentId],
     queryFn: () => fetchAssessment(assessmentId),
-    refetchInterval: (query) =>
-      query.state.error ? false : query.state.data?.status === 'running' ? 5000 : false,
+    refetchInterval: false,
   })
+
+  // When the status probe sees the pipeline finish, refresh the full payload once.
+  useEffect(() => {
+    if (status && status.status !== 'running') {
+      queryClient.invalidateQueries({ queryKey: ['assessment', assessmentId] })
+    }
+  }, [status?.status, assessmentId, queryClient])
 
   const rerun = useMutation({
     mutationFn: () => rerunAssessment(assessmentId),
@@ -645,19 +662,19 @@ export default function AssessmentPage() {
     }),
   }
 
-  if (isLoading) return <p>Loading…</p>
-  if (error) return <p className="error">{(error as Error).message}</p>
-  if (!assessment) return null
+  if (isLoading && !status) return <p>Loading…</p>
 
-  if (assessment.status === 'running') {
+  const isRunning = running || assessment?.status === 'running'
+  if (isRunning) {
+    const progress = status?.progress ?? assessment?.progress ?? {}
     return (
       <div className="stack narrow">
-        <h2>Assessment #{assessment.id} — running</h2>
+        <h2>Assessment #{assessmentId} — running</h2>
         <div className="card">
           <p>
-            <span className="badge badge-running">running</span> {String(assessment.progress.stage ?? '')}
+            <span className="badge badge-running">running</span> {String(progress.stage ?? '')}
           </p>
-          <p>{String(assessment.progress.message ?? 'Working…')}</p>
+          <p>{String(progress.message ?? 'Working…')}</p>
           <p className="muted">
             Working… this typically takes several minutes — watch the AI run log below. This page
             refreshes automatically.
@@ -667,6 +684,9 @@ export default function AssessmentPage() {
       </div>
     )
   }
+
+  if (error) return <p className="error">{(error as Error).message}</p>
+  if (!assessment) return isLoading ? <p>Loading…</p> : null
 
   if (assessment.status === 'error') {
     return (

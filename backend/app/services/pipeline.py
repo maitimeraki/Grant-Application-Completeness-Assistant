@@ -25,6 +25,7 @@ from app.services.llm import (
     LLMOutputError,
     complete_json,
     llm_available,
+    llm_log_persist_failures,
 )
 from app.services.quotes import find_block_for_quote
 
@@ -234,6 +235,9 @@ def _stage_map_requirements(session, assessment: Assessment) -> None:
     ) if requirements else set()
     todo = [r for r in requirements if r.id not in already_mapped]
     total = len(todo)
+    # Tokenize the application once; re-tokenizing every block per requirement
+    # was the single hottest CPU/memory loop in the pipeline.
+    tokenized_app = retrieval.tokenize_blocks(app_blocks)
     for i, req in enumerate(todo, start=1):
         _set_progress(
             assessment, "map_requirements",
@@ -241,7 +245,9 @@ def _stage_map_requirements(session, assessment: Assessment) -> None:
         )
         session.commit()
 
-        candidates = retrieval.score_blocks(req.requirement_text, app_blocks, top_k=8)
+        candidates = retrieval.score_blocks(
+            req.requirement_text, app_blocks, top_k=8, tokenized=tokenized_app
+        )
         cand_text = _format_blocks([b for _, b in candidates]) or "(no candidate passages found)"
         user = (
             "Determine whether the draft application below satisfies this "
@@ -517,6 +523,12 @@ def run_pipeline(assessment_id: int) -> None:
             message = "Complete — ready for review"
             if failed:
                 message += f" ({failed} chunk(s) failed; results may be incomplete)"
+            persist_failures = llm_log_persist_failures()
+            if persist_failures:
+                message += (
+                    f" ({persist_failures} AI log row(s) could not be saved — "
+                    "the AI run log below may be incomplete)"
+                )
             _set_progress(assessment, "finalize", message)
             assessment.status = "review"
             assessment.completed_at = utcnow()

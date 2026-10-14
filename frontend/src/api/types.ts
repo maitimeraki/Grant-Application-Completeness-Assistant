@@ -141,6 +141,12 @@ export interface Assessment {
   staleness: Staleness
 }
 
+export interface AssessmentStatus {
+  id: number
+  status: 'running' | 'review' | 'error'
+  progress: { stage?: string; message?: string; [k: string]: unknown }
+}
+
 export interface AssessmentListItem {
   id: number
   status: string

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db import get_db
 from app.models import (
@@ -132,19 +132,24 @@ def _assessment_out(assessment: Assessment) -> AssessmentOut:
     )
 
 
+# Collections must use selectinload, never joinedload: joining several
+# one-to-many collections in a single SELECT produces a Cartesian product
+# (blocks x requirements x citations x ...) that can spill gigabytes of
+# Postgres temp files and 500 the request ("No space left on device").
+# To-one chains stay joinedload (single-row, no explosion).
 ASSESSMENT_LOADS = [
     joinedload(Assessment.guideline_version).joinedload(DocumentVersion.document),
-    joinedload(Assessment.guideline_version).joinedload(DocumentVersion.blocks),
+    joinedload(Assessment.guideline_version).selectinload(DocumentVersion.blocks),
     joinedload(Assessment.application_version).joinedload(DocumentVersion.document),
-    joinedload(Assessment.application_version).joinedload(DocumentVersion.blocks),
-    joinedload(Assessment.requirements)
+    joinedload(Assessment.application_version).selectinload(DocumentVersion.blocks),
+    selectinload(Assessment.requirements)
     .joinedload(Requirement.mapping)
-    .joinedload(Mapping.citations)
+    .selectinload(Mapping.citations)
     .joinedload(MappingCitation.block),
-    joinedload(Assessment.requirements).joinedload(Requirement.basis_block),
-    joinedload(Assessment.supporting_docs),
-    joinedload(Assessment.claims).joinedload(Claim.block),
-    joinedload(Assessment.questions),
+    selectinload(Assessment.requirements).joinedload(Requirement.basis_block),
+    selectinload(Assessment.supporting_docs),
+    selectinload(Assessment.claims).joinedload(Claim.block),
+    selectinload(Assessment.questions),
 ]
 
 
@@ -511,10 +516,30 @@ def patch_question(question_id: int, body: QuestionPatch, db: Session = Depends(
 
 # ---------- summary ----------
 
+@router.get("/assessments/{assessment_id}/status")
+def get_assessment_status(assessment_id: int, db: Session = Depends(get_db)) -> dict:
+    """Lightweight progress probe — safe to poll while an assessment is running.
+
+    Deliberately avoids ASSESSMENT_LOADS so the running-page refresh loop never
+    joins document text or other collections.
+    """
+    assessment = db.get(Assessment, assessment_id)
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    return {
+        "id": assessment.id,
+        "status": assessment.status,
+        "progress": assessment.progress or {},
+    }
+
+
 @router.get("/assessments/{assessment_id}/llm-logs", response_model=list[LLMCallLogOut])
 def get_llm_logs(assessment_id: int, db: Session = Depends(get_db)) -> list[LLMCallLogOut]:
     """Structured record of every LLM call made while running this assessment."""
-    _get_assessment_or_404(db, assessment_id)
+    # Lightweight existence check only — this endpoint is polled while the
+    # pipeline is running and must never run the full ASSESSMENT_LOADS graph.
+    if db.get(Assessment, assessment_id) is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
     rows = db.scalars(
         select(LLMCallLog)
         .where(LLMCallLog.assessment_id == assessment_id)

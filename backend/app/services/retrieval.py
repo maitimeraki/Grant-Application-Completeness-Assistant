@@ -17,11 +17,28 @@ def tokenize(text: str) -> list[str]:
     return [t for t in _TOKEN.findall((text or "").casefold()) if t not in STOPWORDS]
 
 
-def score_blocks(query: str, blocks: list, top_k: int = 8) -> list[tuple[float, object]]:
-    """Lightweight BM25-style ranking of text blocks against a query."""
+def tokenize_blocks(blocks: list) -> list[Counter]:
+    """Pre-tokenize blocks once so score_blocks can be called per-requirement
+    without re-tokenizing the whole document every time."""
+    return [Counter(tokenize(b.text)) for b in blocks]
+
+
+def score_blocks(
+    query: str,
+    blocks: list,
+    top_k: int = 8,
+    *,
+    tokenized: list[Counter] | None = None,
+) -> list[tuple[float, object]]:
+    """Lightweight BM25-style ranking of text blocks against a query.
+
+    Pass `tokenized=tokenize_blocks(blocks)` when scoring many queries against
+    the same blocks to avoid repeated tokenization.
+    """
     if not blocks:
         return []
-    tokenized = [Counter(tokenize(b.text)) for b in blocks]
+    if tokenized is None:
+        tokenized = tokenize_blocks(blocks)
     n = len(blocks)
     doc_freq: Counter[str] = Counter()
     for tf in tokenized:

@@ -235,3 +235,22 @@ docker run -d -p 8000:8000 \
 - Sample inputs: paste any short grant guideline as a "guideline" document
   and a draft application as an "application" document on the Documents
   page, then create an assessment from the New Assessment page.
+
+### Database hygiene (small/Render instances)
+
+Document text, AI call logs, and audit rows accumulate in the database.
+On a 1 GB free-tier Postgres this eventually fills the disk ("No space
+left on device"), which 500s requests and can take the app down. Two notes:
+
+- **Free Render Postgres expires 30 days after creation** (see
+  `render.yaml`) — upgrade to a paid plan if you need the data to survive.
+- Periodically run the purge script to delete aged `llm_call_logs` /
+  `audit_log` rows and un-stick crashed "running" assessments:
+
+  ```bash
+  cd backend
+  python scripts/purge_old_records.py --dry-run   # preview
+  python scripts/purge_old_records.py             # apply
+  ```
+
+  Then reclaim space in the Postgres shell: `VACUUM (NOT FULL) analyze;`

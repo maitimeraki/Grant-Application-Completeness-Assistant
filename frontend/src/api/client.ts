@@ -1,6 +1,7 @@
 import type {
   Assessment,
   AssessmentListItem,
+  AssessmentStatus,
   Document,
   DocumentVersion,
   LlmCallLog,
@@ -79,6 +80,10 @@ export function fetchAssessments(): Promise<AssessmentListItem[]> {
 
 export function fetchAssessment(id: number): Promise<Assessment> {
   return request(`/api/assessments/${id}`)
+}
+
+export function fetchAssessmentStatus(id: number): Promise<AssessmentStatus> {
+  return request(`/api/assessments/${id}/status`)
 }
 
 export function createAssessment(payload: {

@@ -44,6 +44,16 @@ def _extract_json(content: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
+# Count of LLMCallLog rows we failed to persist (e.g. DB disk full). The
+# pipeline surfaces this in assessment progress so a silently-empty AI log
+# is explainable in the UI instead of looking like "no calls were made".
+_log_persist_failures = 0
+
+
+def llm_log_persist_failures() -> int:
+    return _log_persist_failures
+
+
 def _log_call(
     *,
     assessment_id: Optional[int],
@@ -81,7 +91,16 @@ def _log_call(
             )
             session.commit()
     except Exception:  # noqa: BLE001 — logging must never break the pipeline
-        logger.exception("failed to persist llm call log")
+        global _log_persist_failures
+        _log_persist_failures += 1
+        logger.error(
+            "failed to persist llm call log (stage=%s, assessment=%s) — "
+            "%s persist failure(s) so far this process",
+            stage,
+            assessment_id,
+            _log_persist_failures,
+            exc_info=True,
+        )
 
 
 def _session_headers(assessment_id: Optional[int]) -> dict[str, str]:

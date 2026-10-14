@@ -13,6 +13,22 @@ from app.services.extraction import (
     extract_from_text,
 )
 
+# Soft cap: beyond this many paragraphs, AI processing on a small instance
+# (512 MB) risks slow runs and memory pressure. We warn instead of rejecting
+# so large documents remain usable, but the user sees the tradeoff up front.
+BLOCK_COUNT_SOFT_LIMIT = 5000
+
+
+def _block_count_warnings(extraction: ExtractionResult) -> list[str]:
+    warnings = list(extraction.warnings)
+    count = len(extraction.blocks)
+    if count > BLOCK_COUNT_SOFT_LIMIT:
+        warnings.append(
+            f"Document has {count} text blocks (soft limit {BLOCK_COUNT_SOFT_LIMIT}); "
+            "AI processing may be slow or exceed small-instance memory limits."
+        )
+    return warnings
+
 
 def _storage_path(version_id: int, filename: str) -> Path:
     settings = get_settings()
@@ -39,7 +55,7 @@ def _persist_version(
         content_hash=data_hash,
         source_type=source_type,
         original_filename=original_filename,
-        extraction_warnings=extraction.warnings,
+        extraction_warnings=_block_count_warnings(extraction),
     )
     session.add(version)
     session.flush()
