@@ -11,7 +11,12 @@ settings.storage_dir.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False, "timeout": 30},
+    connect_args=(
+        {"check_same_thread": False, "timeout": 30}
+        if settings.database_url.startswith("sqlite")
+        else {}
+    ),
+    pool_pre_ping=True,
 )
 
 if settings.database_url.startswith("sqlite"):

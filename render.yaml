@@ -1,0 +1,37 @@
+# Render Blueprint — backend + database (see README § Deployment)
+# Instantiate: Render Dashboard → New → Blueprint → select this repo.
+# You will be prompted for LLM_API_KEY (sync: false below).
+
+databases:
+  - name: gaca-db
+    plan: free # Free Postgres expires 30 days after creation; upgrade to paid to keep data
+    databaseName: gaca
+
+services:
+  - type: web
+    name: gaca-backend # → https://gaca-backend.onrender.com
+    runtime: python
+    plan: free
+    branch: main
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gaca-db
+          property: connectionString
+      - key: LLM_API_KEY
+        sync: false # enter your key in the Render Dashboard when prompted
+      - key: LLM_PROVIDER
+        value: deepseek
+      - key: LLM_MODEL
+        value: deepseek-v4-flash
+      - key: LLM_BASE_URL
+        value: https://opencode.ai/zen/go/v1
+      - key: SEED_ON_STARTUP
+        value: "true"

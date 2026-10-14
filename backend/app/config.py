@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -31,6 +32,14 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     app_name: str = "Grant Application Completeness Assistant"
     log_level: str = "INFO"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_postgres_scheme(cls, value: object) -> object:
+        # Render may supply postgres://...; SQLAlchemy only accepts postgresql://
+        if isinstance(value, str) and value.startswith("postgres://"):
+            return "postgresql://" + value[len("postgres://") :]
+        return value
 
 
 @lru_cache
