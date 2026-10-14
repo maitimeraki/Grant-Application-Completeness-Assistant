@@ -316,6 +316,11 @@ def _stage_gap_analysis(session, assessment: Assessment) -> None:
 
 
 def _stage_claims(session, assessment: Assessment) -> None:
+    # Idempotent re-runs (resume after a server restart): regenerate from
+    # scratch so partial rows from an interrupted run are never duplicated.
+    session.query(Claim).filter(Claim.assessment_id == assessment.id).delete(
+        synchronize_session=False
+    )
     blocks = list(assessment.application_version.blocks)
     if not blocks:
         return
@@ -371,6 +376,11 @@ def _stage_claims(session, assessment: Assessment) -> None:
 
 
 def _stage_questions(session, assessment: Assessment) -> None:
+    # Idempotent re-runs: regenerate questions from scratch (the assessment is
+    # still "running", so no user answers exist yet).
+    session.query(ClarificationQuestion).filter(
+        ClarificationQuestion.assessment_id == assessment.id
+    ).delete(synchronize_session=False)
     gaps = []
     for req in assessment.requirements:
         mapping = req.mapping

@@ -645,7 +645,10 @@ export default function AssessmentPage() {
             <span className="badge badge-running">running</span> {String(assessment.progress.stage ?? '')}
           </p>
           <p>{String(assessment.progress.message ?? 'Working…')}</p>
-          <p className="muted">This page refreshes automatically.</p>
+          <p className="muted">
+            Working… this typically takes several minutes — watch the AI run log below. This page
+            refreshes automatically.
+          </p>
           <LlmLogSection assessmentId={assessmentId} running />
         </div>
       </div>

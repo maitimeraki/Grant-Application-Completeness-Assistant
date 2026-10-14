@@ -56,7 +56,8 @@ export default function NewAssessmentPage() {
       <p className="muted">
         The latest version of each selected document is used. With “run AI review” the pipeline
         extracts requirements, maps them to the application, and flags gaps — every mapping still
-        needs your confirmation.
+        needs your confirmation. AI review runs in the background and typically takes 3–10
+        minutes; you can watch its progress in the AI run log.
       </p>
       {error && <p className="error">{(error as Error).message}</p>}
       {(guidelines.length === 0 || applications.length === 0) && (
@@ -122,7 +123,7 @@ export default function NewAssessmentPage() {
 
         <label className="inline">
           <input type="checkbox" checked={runLlm} onChange={(e) => setRunLlm(e.target.checked)} />
-          Run AI review (requires LLM API key in backend/.env)
+          Run AI review — typically takes 3–10 minutes (requires LLM API key in backend/.env)
         </label>
 
         {formError && <p className="error">{formError}</p>}

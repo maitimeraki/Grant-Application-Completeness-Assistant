@@ -20,25 +20,97 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _seed_in_background() -> None:
-    """Seed the reviewer sample sets without blocking server startup."""
+def _resume_interrupted_assessments() -> None:
+    """Re-queue assessments stuck at 'running' after a restart or crash.
+
+    The pipeline runs as an in-process background task, so a process restart
+    kills it and nothing else would ever finish these. Guarded by
+    progress.resume_attempts (max 2) so a pipeline that crashes the server
+    can never crash-loop it.
+    """
+    from app.db import SessionLocal
+    from app.models import Assessment, utcnow
+    from app.services.pipeline import run_pipeline
+
+    with SessionLocal() as session:
+        stuck_ids = [
+            row.id
+            for row in session.query(Assessment)
+            .filter(Assessment.status == "running")
+            .order_by(Assessment.id)
+            .all()
+        ]
+
+    for assessment_id in stuck_ids:
+        with SessionLocal() as session:
+            assessment = session.get(Assessment, assessment_id)
+            if assessment is None or assessment.status != "running":
+                continue
+            progress = dict(assessment.progress or {})
+            try:
+                attempts = int(progress.get("resume_attempts", 0) or 0)
+            except (TypeError, ValueError):
+                attempts = 0
+            if attempts >= 2:
+                assessment.status = "error"
+                progress.update(
+                    {
+                        "stage": "error",
+                        "message": (
+                            "Interrupted by server restart — please Re-run "
+                            "against latest versions."
+                        ),
+                        "updated_at": utcnow().isoformat(),
+                    }
+                )
+                assessment.progress = progress
+                session.commit()
+                logger.info(
+                    "assessment %s: resume limit reached — marked error",
+                    assessment_id,
+                )
+                continue
+            progress.update(
+                {
+                    "resume_attempts": attempts + 1,
+                    "message": "Resuming after server restart…",
+                    "updated_at": utcnow().isoformat(),
+                }
+            )
+            assessment.progress = progress
+            session.commit()
+        logger.info(
+            "resuming interrupted assessment %s (attempt %s)",
+            assessment_id,
+            attempts + 1,
+        )
+        run_pipeline(assessment_id)
+
+
+def _startup_background() -> None:
+    """Seed (if enabled), then resume interrupted assessments — one thread so
+    seeding and resume never race on the same assessment."""
 
     def _run() -> None:
+        if settings.seed_on_startup:
+            try:
+                from app.services.seed import seed_demo_data
+
+                result = seed_demo_data()
+                logger.info("startup seed: %s", result)
+            except Exception:  # noqa: BLE001 — seeding must never take the server down
+                logger.exception("startup seeding failed (server continues without samples)")
         try:
-            from app.services.seed import seed_demo_data
+            _resume_interrupted_assessments()
+        except Exception:  # noqa: BLE001 — recovery must never take the server down
+            logger.exception("resume of interrupted assessments failed")
 
-            result = seed_demo_data()
-            logger.info("startup seed: %s", result)
-        except Exception:  # noqa: BLE001 — seeding must never take the server down
-            logger.exception("startup seeding failed (server continues without samples)")
-
-    threading.Thread(target=_run, daemon=True, name="seed-samples").start()
+    threading.Thread(target=_run, daemon=True, name="startup-tasks").start()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if settings.seed_on_startup:
-        _seed_in_background()
+    _startup_background()
     yield
 
 

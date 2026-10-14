@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = ""
     llm_base_url: str = ""
-    seed_on_startup: bool = True
+    seed_on_startup: bool = False
     samples_dir: Path = BACKEND_DIR.parent / "samples"
     cors_origins: list[str] = [
         "http://localhost:5173",
