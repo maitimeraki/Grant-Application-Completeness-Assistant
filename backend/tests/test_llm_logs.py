@@ -17,49 +17,29 @@ class Tiny(BaseModel):
     value: int
 
 
-class _Usage:
-    def __init__(self, prompt: int, completion: int) -> None:
-        self.prompt_tokens = prompt
-        self.completion_tokens = completion
-
-
-class _Message:
-    def __init__(self, content: str) -> None:
-        self.content = content
-
-
-class _Choice:
-    def __init__(self, content: str) -> None:
-        self.message = _Message(content)
-
-
-class _Response:
-    def __init__(self, content: str, prompt_tokens: int = 100, completion_tokens: int = 50) -> None:
-        self.choices = [_Choice(content)]
-        self.usage = _Usage(prompt_tokens, completion_tokens)
-
-
 @pytest.fixture()
 def llm_key(monkeypatch):
     monkeypatch.setattr(get_settings(), "llm_api_key", "sk-test-not-real")
 
 
-def _fake_completion(payloads: list[str], calls: list):
+def _fake_chat(payloads: list[str], calls: list):
     def fake(**kwargs):
         calls.append(kwargs)
-        return _Response(payloads[len(calls) - 1])
+        content = payloads[len(calls) - 1]
+        return content, 100, 50
 
     return fake
 
 
 def test_successful_call_is_logged(llm_key, monkeypatch):
     calls: list = []
-    monkeypatch.setattr("litellm.completion", _fake_completion([json.dumps({"value": 7})], calls))
+    monkeypatch.setattr("app.services.llm._openai_chat", _fake_chat([json.dumps({"value": 7})], calls))
 
     result = complete_json(
         system="s", user="u", schema=Tiny, stage="map_requirements", assessment_id=None
     )
     assert result.value == 7
+    assert calls[0]["model"] == get_settings().llm_model
 
     with SessionLocal() as session:
         rows = session.query(LLMCallLog).all()
@@ -80,8 +60,8 @@ def test_successful_call_is_logged(llm_key, monkeypatch):
 def test_validation_failure_then_repair_logs_both_attempts(llm_key, monkeypatch):
     calls: list = []
     monkeypatch.setattr(
-        "litellm.completion",
-        _fake_completion(["this is not json at all", json.dumps({"value": 3})], calls),
+        "app.services.llm._openai_chat",
+        _fake_chat(["this is not json at all", json.dumps({"value": 3})], calls),
     )
 
     result = complete_json(system="s", user="u", schema=Tiny, stage="claims", assessment_id=None)
@@ -93,13 +73,14 @@ def test_validation_failure_then_repair_logs_both_attempts(llm_key, monkeypatch)
         assert len(rows) == 2
         assert rows[0].success is False and rows[0].attempt == 1
         assert rows[0].error  # validation failure recorded
+        assert "output snippet" in rows[0].error  # bad content is preserved for debugging
         assert rows[1].success is True and rows[1].attempt == 2
 
 
 def test_repeated_failure_raises_and_logs(llm_key, monkeypatch):
     calls: list = []
     monkeypatch.setattr(
-        "litellm.completion", _fake_completion(["garbage one", "garbage two"], calls)
+        "app.services.llm._openai_chat", _fake_chat(["garbage one", "garbage two"], calls)
     )
 
     with pytest.raises(LLMOutputError):
@@ -115,7 +96,7 @@ def test_transport_error_is_logged_then_raised(llm_key, monkeypatch):
     def boom(**kwargs):
         raise RuntimeError("network down")
 
-    monkeypatch.setattr("litellm.completion", boom)
+    monkeypatch.setattr("app.services.llm._openai_chat", boom)
 
     with pytest.raises(RuntimeError, match="network down"):
         complete_json(system="s", user="u", schema=Tiny, stage="extract_requirements")
@@ -125,6 +106,47 @@ def test_transport_error_is_logged_then_raised(llm_key, monkeypatch):
         assert len(rows) == 1
         assert rows[0].success is False
         assert "transport error" in (rows[0].error or "")
+
+
+def test_provider_routing(llm_key, monkeypatch):
+    settings = get_settings()
+    http_calls: list = []
+    native_calls: list = []
+
+    def http_fake(**kwargs):
+        http_calls.append(kwargs)
+        return json.dumps({"value": 1}), 1, 1
+
+    def native_fake(**kwargs):
+        native_calls.append(kwargs)
+        return json.dumps({"value": 2}), 1, 1
+
+    monkeypatch.setattr("app.services.llm._openai_chat", http_fake)
+    monkeypatch.setattr("app.services.llm._litellm_chat", native_fake)
+
+    # Gateway set (LLM_BASE_URL) → httpx path regardless of provider label
+    monkeypatch.setattr(settings, "llm_base_url", "https://example.com/v1")
+    monkeypatch.setattr(settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(settings, "llm_model", "deepseek-v4-flash")
+    result = complete_json(system="s", user="u", schema=Tiny, stage="t")
+    assert result.value == 1
+    assert http_calls[-1]["model"] == "deepseek-v4-flash"
+    assert not native_calls
+
+    # No gateway + native vendor → litellm path with provider-prefixed model
+    monkeypatch.setattr(settings, "llm_base_url", "")
+    result = complete_json(system="s", user="u", schema=Tiny, stage="t")
+    assert result.value == 2
+    assert native_calls[-1]["model"] == "deepseek/deepseek-v4-flash"
+    assert len(http_calls) == 1
+
+    # No gateway + openai provider → httpx path, bare model
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(settings, "llm_model", "openai/gpt-4o-mini")
+    result = complete_json(system="s", user="u", schema=Tiny, stage="t")
+    assert result.value == 1
+    assert http_calls[-1]["model"] == "gpt-4o-mini"
+    assert len(native_calls) == 1
 
 
 def test_llm_logs_endpoint_returns_ordered_rows(client):

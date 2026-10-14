@@ -41,7 +41,7 @@ STAGES = [
     "finalize",
 ]
 
-CHUNK_CHAR_LIMIT = 6000
+CHUNK_CHAR_LIMIT = 14000
 
 
 # ---------- LLM output schemas ----------
@@ -139,16 +139,20 @@ def _stage_extract_requirements(session, assessment: Assessment) -> None:
 
     existing_codes = {r.code for r in assessment.requirements}
     seen = set(existing_codes)
+    failed_chunks = 0
     for chunk in _chunk_blocks(blocks):
         user = (
             "Extract every submission requirement from this grant guideline "
             "excerpt (blocks are tagged with ids).\n\n"
             "Rules:\n"
+            "- Extract AT MOST 12 requirements per excerpt; prioritize the most "
+            "significant ones.\n"
             "- Distinguish MANDATORY requirements (must, is required, mandatory, "
             "applicants shall, deadline, limit) from RECOMMENDED ones (should, "
             "encouraged, optional, preference). Use \"ambiguous\" when the "
             "guideline does not clearly signal either.\n"
-            "- basis_quote must be copied VERBATIM from the guideline text.\n"
+            "- basis_quote must be copied VERBATIM from the guideline text, "
+            "max 200 characters (a verbatim prefix is fine).\n"
             "- Use stable short codes like R1, R2, ... (globally unique).\n"
             "- If a requirement names a specific attachment or supporting "
             "document, set required_supporting_doc_name to its exact name.\n\n"
@@ -159,11 +163,13 @@ def _stage_extract_requirements(session, assessment: Assessment) -> None:
                 system="You extract grant submission requirements as structured JSON.",
                 user=user,
                 schema=ExtractionResult,
+                max_tokens=16384,
                 stage="extract_requirements",
                 assessment_id=assessment.id,
             )
         except (LLMOutputError, LLMNotConfiguredError) as exc:
             logger.warning("requirement extraction chunk failed: %s", exc)
+            failed_chunks += 1
             continue
 
         for item in result.requirements:
@@ -199,6 +205,11 @@ def _stage_extract_requirements(session, assessment: Assessment) -> None:
                     source="llm",
                 )
             )
+    if failed_chunks:
+        _set_progress(
+            assessment, "extract_requirements",
+            f"{failed_chunks} extraction chunk(s) failed", failed_chunks=failed_chunks,
+        )
     session.commit()
     # the requirements collection was (possibly) loaded before extraction ran;
     # expire it so later stages see the newly added rows.
@@ -310,13 +321,14 @@ def _stage_claims(session, assessment: Assessment) -> None:
         return
     docs = list(assessment.supporting_docs)
     evidence_text = "\n".join(_doc_meta_line(d) for d in docs) or "(no supporting-document metadata supplied)"
-    # Smaller chunks than requirement extraction: large claim arrays are the
-    # most common source of malformed model JSON (observed with some models).
-    for chunk in _chunk_blocks(blocks, limit=3000):
+    # Larger chunks are fine now that extraction/claims outputs are capped and
+    # max_tokens is generous; caps below keep model JSON arrays small.
+    failed_chunks = 0
+    for chunk in _chunk_blocks(blocks, limit=10000):
         user = (
             "Identify factual claims in this draft-application excerpt that "
             "would need evidence in a funding application (results, metrics, "
-            "partnerships, credentials, outcomes). Extract AT MOST 6 claims "
+            "partnerships, credentials, outcomes). Extract AT MOST 10 claims "
             "per excerpt; keep each claim_text under 120 characters and avoid "
             "double quotes inside strings. For each claim, judge "
             "whether the SUPPLIED EVIDENCE (supporting-document metadata only) "
@@ -330,11 +342,13 @@ def _stage_claims(session, assessment: Assessment) -> None:
                 system="You extract evidence-dependent claims as structured JSON.",
                 user=user,
                 schema=ClaimsResult,
+                max_tokens=16384,
                 stage="claims",
                 assessment_id=assessment.id,
             )
         except (LLMOutputError, LLMNotConfiguredError) as exc:
             logger.warning("claims chunk failed: %s", exc)
+            failed_chunks += 1
             continue
         for item in result.claims:
             block = find_block_for_quote(item.quote, chunk) or find_block_for_quote(item.quote, blocks)
@@ -348,6 +362,11 @@ def _stage_claims(session, assessment: Assessment) -> None:
                     source="llm",
                 )
             )
+    if failed_chunks:
+        _set_progress(
+            assessment, "claims",
+            f"{failed_chunks} claims chunk(s) failed", claims_failed_chunks=failed_chunks,
+        )
     session.commit()
 
 
@@ -481,7 +500,14 @@ def run_pipeline(assessment_id: int) -> None:
             _stage_gap_analysis(session, assessment)
             _stage_claims(session, assessment)
             _stage_questions(session, assessment)
-            _set_progress(assessment, "finalize", "Complete — ready for review")
+            progress = assessment.progress or {}
+            failed = int(progress.get("extraction_failed_chunks", 0) or 0) + int(
+                progress.get("claims_failed_chunks", 0) or 0
+            )
+            message = "Complete — ready for review"
+            if failed:
+                message += f" ({failed} chunk(s) failed; results may be incomplete)"
+            _set_progress(assessment, "finalize", message)
             assessment.status = "review"
             assessment.completed_at = utcnow()
         except LLMNotConfiguredError as exc:

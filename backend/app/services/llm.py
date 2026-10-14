@@ -8,8 +8,6 @@ from typing import Optional, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-import litellm
-
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -17,6 +15,8 @@ logger = logging.getLogger(__name__)
 _SESSION_ID = uuid.uuid4().hex
 
 T = TypeVar("T", bound=BaseModel)
+
+OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
 
 
 class LLMNotConfiguredError(RuntimeError):
@@ -84,12 +84,112 @@ def _log_call(
         logger.exception("failed to persist llm call log")
 
 
+def _session_headers(assessment_id: Optional[int]) -> dict[str, str]:
+    settings = get_settings()
+    return {
+        "Authorization": f"Bearer {settings.llm_api_key}",
+        "Content-Type": "application/json",
+        "x-opencode-session": f"gaca-{assessment_id}" if assessment_id else _SESSION_ID,
+        "User-Agent": "grant-completeness-assistant/0.1",
+    }
+
+
+def _openai_chat(
+    *,
+    model: str,
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+    assessment_id: Optional[int],
+) -> tuple[str, Optional[int], Optional[int]]:
+    """Call an OpenAI-compatible /chat/completions endpoint via httpx.
+
+    Used for LLM_BASE_URL gateways and for the OpenAI provider itself —
+    avoids importing litellm (~190 MB RSS), which a 512 MB instance cannot
+    spare. Returns (content, prompt_tokens, completion_tokens).
+    """
+    import httpx
+
+    settings = get_settings()
+    base = (settings.llm_base_url or OPENAI_DEFAULT_BASE).rstrip("/")
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"},
+    }
+    with httpx.Client(timeout=180) as client:
+        resp = client.post(f"{base}/chat/completions", headers=_session_headers(assessment_id), json=payload)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"HTTP {resp.status_code} from {base}: {resp.text[:500]}")
+        data = resp.json()
+    try:
+        content = data["choices"][0]["message"].get("content") or ""
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"unexpected response shape from {base}: {exc}; body: {json.dumps(data)[:500]}")
+    usage = data.get("usage") or {}
+    return content, usage.get("prompt_tokens"), usage.get("completion_tokens")
+
+
+def _litellm_chat(
+    *,
+    model: str,
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+    assessment_id: Optional[int],
+) -> tuple[str, Optional[int], Optional[int]]:
+    """Native vendor routing (e.g. deepseek/..., anthropic/...) without a
+    gateway, via LiteLLM. Imported lazily so its ~190 MB dependency tree is
+    never loaded in OpenAI-compatible (gateway) setups.
+    """
+    import litellm
+
+    try:
+        litellm.suppress_debug_info = True
+        litellm.telemetry = False
+    except Exception:  # noqa: BLE001 — best-effort quieting
+        pass
+    response = litellm.completion(
+        model=model,
+        api_key=get_settings().llm_api_key or None,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+        timeout=180,
+        extra_headers=_session_headers(assessment_id),
+    )
+    content = response.choices[0].message.content or ""
+    usage = getattr(response, "usage", None)
+    return content, getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None)
+
+
+def _route(model: str) -> tuple[str, bool]:
+    """Resolve (model, use_litellm) from LLM_PROVIDER / LLM_BASE_URL.
+
+    - LLM_BASE_URL set (custom OpenAI-compatible gateway) → httpx, any provider label.
+    - LLM_PROVIDER openai/empty → httpx against OpenAI (or the gateway).
+    - LLM_PROVIDER another vendor without a gateway → lazy LiteLLM native path.
+    """
+    settings = get_settings()
+    provider = (settings.llm_provider or "openai").strip().lower()
+    if provider not in ("", "openai") and not settings.llm_base_url:
+        if "/" not in model:
+            model = f"{provider}/{model}"
+        return model, True
+    if model.startswith("openai/"):
+        model = model[len("openai/") :]
+    return model, False
+
+
 def complete_json(
     system: str,
     user: str,
     schema: type[T],
     temperature: float = 0.0,
-    max_tokens: int = 4096,
+    max_tokens: int = 8192,
     *,
     stage: str = "",
     assessment_id: Optional[int] = None,
@@ -102,13 +202,13 @@ def complete_json(
     settings = get_settings()
     if not settings.llm_api_key:
         raise LLMNotConfiguredError(
-            "LLM API key not configured. Set LLM_API_KEY in backend/.env, or "
-            "create the assessment with run_llm=false for manual review."
+            "LLM API key not configured. Set LLM_API_KEY in backend/.env or in "
+            "the deployment environment, or create the assessment with "
+            "run_llm=false for manual review."
         )
 
-    model = settings.llm_model
-    if settings.llm_base_url and "/" not in model:
-        model = f"openai/{model}"
+    model, use_litellm = _route(settings.llm_model)
+    chat = _litellm_chat if use_litellm else _openai_chat
 
     schema_json = json.dumps(schema.model_json_schema())
     messages = [
@@ -128,19 +228,12 @@ def complete_json(
         prompt_chars = sum(len(m["content"]) for m in messages)
         started = time.perf_counter()
         try:
-            response = litellm.completion(
+            content, tokens_prompt, tokens_completion = chat(
                 model=model,
-                api_key=settings.llm_api_key or None,
-                api_base=settings.llm_base_url or None,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-                timeout=180,
-                extra_headers={
-                    "x-opencode-session": f"gaca-{assessment_id}" if assessment_id else _SESSION_ID,
-                    "User-Agent": "grant-completeness-assistant/0.1",
-                },
+                assessment_id=assessment_id,
             )
         except Exception as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
@@ -160,10 +253,6 @@ def complete_json(
             raise
 
         latency_ms = int((time.perf_counter() - started) * 1000)
-        content = response.choices[0].message.content or ""
-        usage = getattr(response, "usage", None)
-        tokens_prompt = getattr(usage, "prompt_tokens", None)
-        tokens_completion = getattr(usage, "completion_tokens", None)
 
         try:
             data = _extract_json(content)
@@ -176,7 +265,7 @@ def complete_json(
                 model=settings.llm_model,
                 attempt=attempt,
                 success=False,
-                error=str(exc),
+                error=f"{exc} | output snippet: {content[:300]!r}",
                 latency_ms=latency_ms,
                 prompt_chars=prompt_chars,
                 completion_chars=len(content),

@@ -515,15 +515,26 @@ function ClaimItem({ assessmentId, claim }: { assessmentId: number; claim: Claim
   )
 }
 
-function LlmLogSection({ assessmentId }: { assessmentId: number }) {
+function LlmLogSection({ assessmentId, running }: { assessmentId: number; running: boolean }) {
   const { data: logs, isLoading } = useQuery({
     queryKey: ['llm-logs', assessmentId],
     queryFn: () => fetchLlmLogs(assessmentId),
-    refetchInterval: (query) => (query.state.data === undefined ? 3000 : false),
+    refetchInterval: running ? 3000 : false,
   })
 
   if (isLoading) return <p className="muted">Loading AI run log…</p>
-  if (!logs || logs.length === 0) return null
+
+  if (!logs || logs.length === 0) {
+    return (
+      <details className="llm-log">
+        <summary>AI run log</summary>
+        <p className="muted">
+          No AI calls logged yet — this fills in once an AI run starts (manual-review
+          assessments have no AI calls).
+        </p>
+      </details>
+    )
+  }
 
   const failures = logs.filter((l) => !l.success).length
 
@@ -635,6 +646,7 @@ export default function AssessmentPage() {
           </p>
           <p>{String(assessment.progress.message ?? 'Working…')}</p>
           <p className="muted">This page refreshes automatically.</p>
+          <LlmLogSection assessmentId={assessmentId} running />
         </div>
       </div>
     )
@@ -789,7 +801,7 @@ export default function AssessmentPage() {
             ))}
           </ul>
 
-          <LlmLogSection assessmentId={assessmentId} />
+          <LlmLogSection assessmentId={assessmentId} running={false} />
         </aside>
       </div>
     </div>

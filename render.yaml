@@ -28,10 +28,10 @@ services:
       - key: LLM_API_KEY
         sync: false # enter your key in the Render Dashboard when prompted
       - key: LLM_PROVIDER
-        value: deepseek
+        value: deepseek # LiteLLM vendor routing; e.g. openai, deepseek, anthropic
       - key: LLM_MODEL
         value: deepseek-v4-flash
       - key: LLM_BASE_URL
         value: https://opencode.ai/zen/go/v1
       - key: SEED_ON_STARTUP
-        value: "true"
+        value: "false" # set to "true" + redeploy to (re)seed the demo samples; off by default so restarts don't burn memory/LLM calls
