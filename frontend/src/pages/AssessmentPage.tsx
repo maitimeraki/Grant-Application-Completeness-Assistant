@@ -516,13 +516,25 @@ function ClaimItem({ assessmentId, claim }: { assessmentId: number; claim: Claim
 }
 
 function LlmLogSection({ assessmentId, running }: { assessmentId: number; running: boolean }) {
-  const { data: logs, isLoading } = useQuery({
+  const { data: logs, isLoading, error } = useQuery({
     queryKey: ['llm-logs', assessmentId],
     queryFn: () => fetchLlmLogs(assessmentId),
-    refetchInterval: running ? 3000 : false,
+    refetchInterval: (query) => (query.state.error ? false : running ? 5000 : false),
   })
 
   if (isLoading) return <p className="muted">Loading AI run log…</p>
+
+  if (error) {
+    return (
+      <details className="llm-log" open>
+        <summary>AI run log</summary>
+        <p className="error">
+          Couldn’t load the AI run log — the backend is unreachable or restarting. Reload this
+          page once the backend is back.
+        </p>
+      </details>
+    )
+  }
 
   if (!logs || logs.length === 0) {
     return (
@@ -603,7 +615,8 @@ export default function AssessmentPage() {
   const { data: assessment, error, isLoading } = useQuery({
     queryKey: ['assessment', assessmentId],
     queryFn: () => fetchAssessment(assessmentId),
-    refetchInterval: (query) => (query.state.data?.status === 'running' ? 2000 : false),
+    refetchInterval: (query) =>
+      query.state.error ? false : query.state.data?.status === 'running' ? 5000 : false,
   })
 
   const rerun = useMutation({

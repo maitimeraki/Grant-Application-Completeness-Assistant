@@ -6,7 +6,12 @@ export default function AssessmentListRoute() {
   const { data, error, isLoading } = useQuery({
     queryKey: ['assessments'],
     queryFn: fetchAssessments,
-    refetchInterval: (query) => (query.state.data?.some((a) => a.status === 'running') ? 3000 : false),
+    refetchInterval: (query) =>
+      query.state.error
+        ? false
+        : query.state.data?.some((a) => a.status === 'running')
+          ? 10000
+          : false,
   })
 
   if (isLoading) return <p>Loading…</p>

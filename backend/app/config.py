@@ -36,9 +36,14 @@ class Settings(BaseSettings):
     @field_validator("database_url", mode="before")
     @classmethod
     def _normalize_postgres_scheme(cls, value: object) -> object:
-        # Render may supply postgres://...; SQLAlchemy only accepts postgresql://
-        if isinstance(value, str) and value.startswith("postgres://"):
-            return "postgresql://" + value[len("postgres://") :]
+        # Render may supply postgres://...; pin the psycopg v3 driver explicitly
+        # so the dialect always matches the `psycopg` package in requirements.txt.
+        if not isinstance(value, str):
+            return value
+        if value.startswith("postgres://"):
+            return "postgresql+psycopg://" + value[len("postgres://") :]
+        if value.startswith("postgresql://"):
+            return "postgresql+psycopg://" + value[len("postgresql://") :]
         return value
 
 
