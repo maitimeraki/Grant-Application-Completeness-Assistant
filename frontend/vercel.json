@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://gaca-backend.onrender.com/api/:path*"
+      "destination": "https://grant-application-completeness-assistant-u3bc.onrender.com/api/:path*"
     },
     {
       "source": "/(.*)",
